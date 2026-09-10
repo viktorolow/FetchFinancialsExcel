@@ -17,19 +17,26 @@ def normalize_api_value(value):
     if value is None or isinstance(value, bool):
         return None
 
+    if isinstance(value, complex):
+        return None
+
     if isinstance(value, (int, float)):
-        if isinstance(value, float) and math.isnan(value):
+        numeric_value = float(value)
+        if not math.isfinite(numeric_value):
             return None
-        return float(value)
+        return numeric_value
 
     if isinstance(value, str):
         stripped = value.strip()
-        if stripped == "" or stripped.lower() in {"none", "nan"}:
+        if stripped == "" or stripped.lower() in {"none", "nan", "inf", "+inf", "-inf"}:
             return None
         try:
-            return float(stripped)
+            numeric_value = float(stripped)
         except ValueError:
             return None
+        if not math.isfinite(numeric_value):
+            return None
+        return numeric_value
 
     if isinstance(value, list):
         if not value:
@@ -43,6 +50,21 @@ def normalize_api_value(value):
         return None
 
     return None
+
+
+def safe_round(value, digits=4):
+    if value is None or isinstance(value, complex):
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric_value):
+        return None
+
+    return round(numeric_value, digits)
 
 
 def safe_divide(numerator, denominator):
@@ -197,19 +219,16 @@ def get_revenue_growth_data(data):
 	growth_values = []
 	for date in sorted_dates:
 		period_data = trend_data.get(date, {})
-		growth_value = period_data.get('revenueEstimateGrowth')
-		try:
-			if growth_value is not None:
-				growth_values.append(float(growth_value))
-		except ValueError:
-			continue
+		growth_value = normalize_api_value(period_data.get('revenueEstimateGrowth'))
+		if growth_value is not None:
+			growth_values.append(growth_value)
 
 		if len(growth_values) == 5:
 			break
 
 	if len(growth_values) >= 5:
 		avg_growth = sum(growth_values) / len(growth_values)
-		growths["RPS Genomsnitt (5y)"] = round(avg_growth, 4)
+		growths["RPS Genomsnitt (5y)"] = safe_round(avg_growth, 4)
 	else:
 		growths["RPS Genomsnitt (5y)"] = None
 
@@ -223,7 +242,7 @@ def get_eps_growth_full(data):
     est_current = normalize_api_value(highlights.get("EPSEstimateCurrentYear"))
     est_next = normalize_api_value(highlights.get("EPSEstimateNextYear"))
     latest_eps = normalize_api_value(highlights.get("DilutedEpsTTM"))
-    eps_per_year = calculate_eps_per_year(data)  
+    eps_per_year = calculate_eps_per_year(data)
 
     # growth from latest actual to current estimate
     if latest_eps is not None and est_current is not None and latest_eps != 0:
@@ -237,16 +256,16 @@ def get_eps_growth_full(data):
     else:
         growth_est_to_est = None
 
-	# control 
-    if growth_actual_to_est is not None and (growth_actual_to_est > 1.2 or growth_actual_to_est < -0.65): 
-        growth_actual_to_est = None 
-        
+    # control
+    if growth_actual_to_est is not None and (growth_actual_to_est > 1.2 or growth_actual_to_est < -0.65):
+        growth_actual_to_est = None
+
     # CAGR (5-year) eps using the eps_per_year data
     cagr = None
     if eps_per_year and len(eps_per_year) >= 2:
         # Get sorted list of years (newest first)
         sorted_years = sorted(eps_per_year.keys(), reverse=True)
-        
+
         # We need at least 2 years to calculate growth
         if len(sorted_years) >= 4:
             # Take up to 6 years (for 5-year growth)
@@ -255,31 +274,20 @@ def get_eps_growth_full(data):
             years_to_use_sorted = sorted(years_to_use)
             start_year = years_to_use_sorted[0]
             end_year = years_to_use_sorted[-1]
-            start_eps = normalize_api_value(eps_per_year[start_year])
-            end_eps = normalize_api_value(eps_per_year[end_year])
+            start_eps = normalize_api_value(eps_per_year.get(start_year))
+            end_eps = normalize_api_value(eps_per_year.get(end_year))
             years_between = int(end_year) - int(start_year)
-        
+
             if start_eps is not None and end_eps is not None and start_eps != 0 and years_between >= 4:
-                cagr = (end_eps / start_eps) ** (1 / years_between) - 1
-                
+                ratio = end_eps / start_eps
+                if ratio > 0 and math.isfinite(ratio):
+                    cagr = ratio ** (1 / years_between) - 1
 
     return {
-        f"EPS Growth {CURRENT_YEAR}": round(growth_actual_to_est, 4) if growth_actual_to_est is not None else None,
-        f"EPS Growth {int(CURRENT_YEAR)+1}": round(growth_est_to_est, 4) if growth_est_to_est is not None else None,
-        "EPS Genomsnitt (5y)": round(cagr, 4) if cagr is not None else None
+        f"EPS Growth {CURRENT_YEAR}": safe_round(growth_actual_to_est, 4) if growth_actual_to_est is not None else None,
+        f"EPS Growth {int(CURRENT_YEAR)+1}": safe_round(growth_est_to_est, 4) if growth_est_to_est is not None else None,
+        "EPS Genomsnitt (5y)": safe_round(cagr, 4) if cagr is not None else None,
     }
-
-# {'200DayMA': 226.3156, '50DayMA': 209.441}
-def get_moving_averages(data):
-	technicals = data.get("Technicals", {})
-
-	key_map = {
-		"200 Day MA": "200DayMA",
-		"50 Day MA": "50DayMA",
-	}
-
-	selected = {readable: technicals.get(api_key) for readable, api_key in key_map.items()}
-	return selected
 
 # Returnerar {'FCF Yield Growth (YoY)': 0.051, 'Average FCF Yield (5y)': 0.0388}
 def fcf_yield_growth_latest(data):
@@ -346,7 +354,7 @@ def calculate_eps_per_year(data):
         year = entry_date[:4]
         if year in target_years:
             eps = normalize_api_value(report.get("epsActual"))
-            result_eps[year] = round(eps, 4) if eps is not None else None
+            result_eps[year] = safe_round(eps, 4) if eps is not None else None
 
     # Se till att alla target_years finns med (även om värdet blir None)
     for year in target_years:
@@ -410,10 +418,11 @@ def calculate_five_year_average_pe(ticker, data, price_data):
 
         if eps is not None and eps != 0 and close is not None:
             pe = close / eps
-            pe_ratios.append(pe)
+            if math.isfinite(pe):
+                pe_ratios.append(float(pe))
 
     # Compute raw average
-    average_pe = round(sum(pe_ratios) / len(pe_ratios), 4) if pe_ratios else None
+    average_pe = safe_round(sum(pe_ratios) / len(pe_ratios), 4) if pe_ratios else None
 
     # filtrera bort bortom 2 std
     if pe_ratios and len(pe_ratios) >= 3:
@@ -424,7 +433,7 @@ def calculate_five_year_average_pe(ticker, data, price_data):
         filtered_pe_ratios = [pe for pe in pe_ratios if abs(pe - mean_pe) <= 2 * std_pe]
 
         if filtered_pe_ratios:
-            average_pe = round(sum(filtered_pe_ratios) / len(filtered_pe_ratios), 4)
+            average_pe = safe_round(sum(filtered_pe_ratios) / len(filtered_pe_ratios), 4)
         else:
             average_pe = None
 
