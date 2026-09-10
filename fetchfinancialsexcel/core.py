@@ -5,6 +5,8 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from typing import List, Tuple, Optional, Dict, Any
+import time
+import random
 
 from . import company_data_extraction_EODH as eodh
 from . import data_analysis as analyse
@@ -259,10 +261,26 @@ class FundamentalDataFetcher:
         url = f'https://eodhd.com/api/search/{keyword}?limit=1&api_token={self.api_key}&fmt=json'
         
         try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status() 
+            for attempt in range(5):
+                response = requests.get(url, timeout=10)
 
-            data = response.json()
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after is not None:
+                        sleep_seconds = max(float(retry_after), 1)
+                    else:
+                        sleep_seconds = min(2 ** attempt, 30)
+
+                    sleep_seconds += random.uniform(0, 1)
+                    time.sleep(sleep_seconds)
+                    continue
+
+                response.raise_for_status() 
+
+                data = response.json()
+                break
+            else:
+                return None
             
             # kontrollera att svaret är en lista med minst ett element
             if not isinstance(data, list) or len(data) == 0:

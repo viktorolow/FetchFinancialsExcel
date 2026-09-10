@@ -3,6 +3,8 @@ import datetime
 from collections import defaultdict
 import concurrent.futures
 import statistics
+import time
+import random
 
 # =============== Globals ===============
 API_KEY = None  # set by the FundamentalDataFetcher class
@@ -10,12 +12,31 @@ now = datetime.datetime.today()
 CURRENT_YEAR = now.strftime("%Y")
 # ========================================
 
+def _request_with_retry(url, timeout=20, max_retries=5):
+    for attempt in range(max_retries):
+        response = requests.get(url, timeout=timeout)
+
+        if response.status_code != 429:
+            response.raise_for_status()
+            return response
+
+        retry_after = response.headers.get("Retry-After")
+        if retry_after is not None:
+            sleep_seconds = max(float(retry_after), 1)
+        else:
+            sleep_seconds = min(2 ** attempt, 30)
+
+        sleep_seconds += random.uniform(0, 1)
+        time.sleep(sleep_seconds)
+
+    response.raise_for_status()
+    return response
+
 # huvudfunktion 
 def fetch_fundamentals(ticker):
 	try:
 		url = f"https://eodhd.com/api/fundamentals/{ticker}?api_token={API_KEY}&fmt=json"
-		resp = requests.get(url)
-		resp.raise_for_status()
+		resp = _request_with_retry(url)
 		return resp.json()
 	except Exception as e:
 		print(f"Fel vid hämtning av data: {e}")
@@ -30,8 +51,7 @@ def fetch_price_data(ticker):
     url = f"https://eodhd.com/api/eod/{ticker}?from={from_date}&to={to_date}&period=d&api_token={API_KEY}&fmt=json"
 
     try:
-        response = requests.get(url)
-        response.raise_for_status()
+        response = _request_with_retry(url)
         data = response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching data for {ticker}: {e}")
@@ -46,8 +66,7 @@ def real_time_price(ticker, data):
         
         general = data.get("General", {})
         
-        resp = requests.get(url)
-        resp.raise_for_status()
+        resp = _request_with_retry(url)
         resp = resp.json()
         return {
             "Price": resp.get("open"),

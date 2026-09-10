@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Enhanced diagnostic logging for failed API requests and missing financial metrics.
+- Additional validation and tracing of EODHD responses to identify incomplete datasets.
+
+### Changed
+- Improved resilience against EODHD API rate limits (HTTP 429) through retry and backoff mechanisms.
+- Improved handling of inconsistent API response types (`None`, `dict`, `str`, `int`, `float`) across financial metric calculations.
+- Increased robustness of ratio calculations when financial data is partially unavailable.
+- Improved processing of securities with incomplete fundamental data.
+
+### Fixed
+- Prevented P/E calculations from failing when API responses return unexpected data structures.
+- Prevented EPS calculations from failing on missing values.
+- Prevented insider ownership calculations from failing on null inputs.
+- Reduced data loss caused by transient API rate limiting and temporary request failures.
+``
+
 ## [0.4.0] - 2025-11-13
 
 ### Added
