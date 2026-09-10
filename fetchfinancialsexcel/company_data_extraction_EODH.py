@@ -5,12 +5,55 @@ import concurrent.futures
 import statistics
 import time
 import random
+import math
 
 # =============== Globals ===============
 API_KEY = None  # set by the FundamentalDataFetcher class
 now = datetime.datetime.today()
 CURRENT_YEAR = now.strftime("%Y")
 # ========================================
+
+def normalize_api_value(value):
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return float(value)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "" or stripped.lower() in {"none", "nan"}:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+
+    if isinstance(value, list):
+        if not value:
+            return None
+        return normalize_api_value(value[0])
+
+    if isinstance(value, dict):
+        for key in ("value", "raw", "amount", "number"):
+            if key in value:
+                return normalize_api_value(value[key])
+        return None
+
+    return None
+
+
+def safe_divide(numerator, denominator):
+    numerator_value = normalize_api_value(numerator)
+    denominator_value = normalize_api_value(denominator)
+
+    if numerator_value is None or denominator_value is None or denominator_value == 0:
+        return None
+
+    return numerator_value / denominator_value
+
 
 def _request_with_retry(url, timeout=20, max_retries=5):
     for attempt in range(max_retries):
@@ -106,10 +149,13 @@ def calculate_roce(data):
 	latest_year = sorted(income_statement.keys(), reverse=True)[0]
 
 	try:
-		ebit = float(income_statement[latest_year].get("ebit", 0))
-		total_assets = float(balance_sheet[latest_year].get("totalAssets", 0))
-		current_liabilities = float(balance_sheet[latest_year].get("totalCurrentLiabilities", 0))
-	except (ValueError, TypeError):
+		ebit = normalize_api_value(income_statement[latest_year].get("ebit", 0))
+		total_assets = normalize_api_value(balance_sheet[latest_year].get("totalAssets", 0))
+		current_liabilities = normalize_api_value(balance_sheet[latest_year].get("totalCurrentLiabilities", 0))
+	except Exception:
+		return {"ROCE": None}
+
+	if ebit is None or total_assets is None or current_liabilities is None:
 		return {"ROCE": None}
 
 	if total_assets == 0:
@@ -141,11 +187,7 @@ def get_revenue_growth_data(data):
 			# Ta det senaste datumet (t.ex. "2025-12" över "2025-06")
 			latest_date = max(dates_for_year)
 			period_data = trend_data[latest_date]
-			growth_value = period_data.get('revenueEstimateGrowth')
-			try:
-				growth_value = float(growth_value) if growth_value is not None else None
-			except ValueError:
-				growth_value = None
+			growth_value = normalize_api_value(period_data.get('revenueEstimateGrowth'))
 
 			key = f"RPS {year}"
 			growths[key] = growth_value
@@ -177,32 +219,26 @@ def get_revenue_growth_data(data):
 def get_eps_growth_full(data):
     highlights = data.get("Highlights", {})
 
-    def safe_float(val):
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
     # get data
-    est_current = safe_float(highlights.get("EPSEstimateCurrentYear"))
-    est_next = safe_float(highlights.get("EPSEstimateNextYear"))
-    latest_eps = safe_float(highlights.get("DilutedEpsTTM"))
+    est_current = normalize_api_value(highlights.get("EPSEstimateCurrentYear"))
+    est_next = normalize_api_value(highlights.get("EPSEstimateNextYear"))
+    latest_eps = normalize_api_value(highlights.get("DilutedEpsTTM"))
     eps_per_year = calculate_eps_per_year(data)  
 
     # growth from latest actual to current estimate
-    if latest_eps and est_current and latest_eps != 0:
+    if latest_eps is not None and est_current is not None and latest_eps != 0:
         growth_actual_to_est = (est_current - latest_eps) / abs(latest_eps)
     else:
         growth_actual_to_est = None
 
     # growth from current estimate to next estimate
-    if est_current and est_next and est_current != 0:
+    if est_current is not None and est_next is not None and est_current != 0:
         growth_est_to_est = (est_next - est_current) / abs(est_current)
     else:
         growth_est_to_est = None
 
 	# control 
-    if growth_actual_to_est > 1.2 or growth_actual_to_est < -0.65: 
+    if growth_actual_to_est is not None and (growth_actual_to_est > 1.2 or growth_actual_to_est < -0.65): 
         growth_actual_to_est = None 
         
     # CAGR (5-year) eps using the eps_per_year data
@@ -219,11 +255,11 @@ def get_eps_growth_full(data):
             years_to_use_sorted = sorted(years_to_use)
             start_year = years_to_use_sorted[0]
             end_year = years_to_use_sorted[-1]
-            start_eps = eps_per_year[start_year]
-            end_eps = eps_per_year[end_year]
+            start_eps = normalize_api_value(eps_per_year[start_year])
+            end_eps = normalize_api_value(eps_per_year[end_year])
             years_between = int(end_year) - int(start_year)
         
-            if start_eps != 0 and years_between >= 4:
+            if start_eps is not None and end_eps is not None and start_eps != 0 and years_between >= 4:
                 cagr = (end_eps / start_eps) ** (1 / years_between) - 1
                 
 
@@ -254,19 +290,16 @@ def fcf_yield_growth_latest(data):
     if not cf_data or not highlights or not balance_sheet:
         return {}
 
-    market_cap = highlights.get("MarketCapitalization")
-    if not market_cap:
+    market_cap = normalize_api_value(highlights.get("MarketCapitalization"))
+    if market_cap is None:
         return {}
 
     latest_date = max(balance_sheet.keys())
     latest_bs = balance_sheet[latest_date]
 
-    net_debt = latest_bs.get("netDebt")
+    net_debt = normalize_api_value(latest_bs.get("netDebt"))
 
-    try:
-        market_cap = float(market_cap)
-        net_debt = float(net_debt)
-    except (TypeError, ValueError):
+    if net_debt is None:
         return {}
 
 	# formel "enterprise value"
@@ -277,12 +310,12 @@ def fcf_yield_growth_latest(data):
 
     fcf_yields = []
     for year, values in cf_data.items():
-        try:
-            fcf = float(values.get("freeCashFlow", 0))
-            yield_val = fcf / ev
-            fcf_yields.append((year, yield_val))
-        except (TypeError, ValueError):
+        fcf = normalize_api_value(values.get("freeCashFlow", 0))
+        if fcf is None:
             continue
+        yield_val = safe_divide(fcf, ev)
+        if yield_val is not None:
+            fcf_yields.append((year, yield_val))
 
     # Sortera efter år, extrahera år från datumsträngen
     fcf_yields.sort(key=lambda x: int(x[0][:4]), reverse=True)
@@ -302,12 +335,6 @@ def fcf_yield_growth_latest(data):
 
 # eps de senaste 5 åren 
 def calculate_eps_per_year(data):
-    def safe_float(val):
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
     # Hämta EPS från "Earnings" -> "Annual"
     annual_eps_data = data.get("Earnings", {}).get("Annual", {})
 
@@ -318,7 +345,7 @@ def calculate_eps_per_year(data):
     for entry_date, report in annual_eps_data.items():
         year = entry_date[:4]
         if year in target_years:
-            eps = safe_float(report.get("epsActual"))
+            eps = normalize_api_value(report.get("epsActual"))
             result_eps[year] = round(eps, 4) if eps is not None else None
 
     # Se till att alla target_years finns med (även om värdet blir None)
@@ -365,11 +392,11 @@ def get_average_annual_close_prices(data, ticker):
 
 # PE-värde, forward, genomsnitt 
 def calculate_five_year_average_pe(ticker, data, price_data):
-    forwardPE = data.get("Valuation", {}).get("ForwardPE", {})
+    forwardPE = normalize_api_value(data.get("Valuation", {}).get("ForwardPE"))
     # correct
-    if forwardPE == 0:
+    if forwardPE is not None and forwardPE == 0:
         forwardPE = None
-    elif abs(forwardPE) > 125:
+    elif forwardPE is not None and abs(forwardPE) > 125:
         forwardPE = None
 
     eps_data = calculate_eps_per_year(data)
@@ -378,10 +405,10 @@ def calculate_five_year_average_pe(ticker, data, price_data):
 
     pe_ratios = []
     for year in sorted(eps_data.keys()):
-        eps = eps_data[year]
-        close = close_prices.get(str(year), {}).get("average_close")  # Updated key name
+        eps = normalize_api_value(eps_data[year])
+        close = normalize_api_value(close_prices.get(str(year), {}).get("average_close"))
 
-        if eps and eps != 0 and close:
+        if eps is not None and eps != 0 and close is not None:
             pe = close / eps
             pe_ratios.append(pe)
 
@@ -402,7 +429,7 @@ def calculate_five_year_average_pe(ticker, data, price_data):
             average_pe = None
 
     # Ta bort extrema
-    if average_pe > 65 or average_pe < -20:
+    if average_pe is not None and (average_pe > 65 or average_pe < -20):
         average_pe = None
 
     return {
@@ -412,7 +439,9 @@ def calculate_five_year_average_pe(ticker, data, price_data):
 
 # andel insiders
 def get_percent_insiders(data):
-	percent_insiders = data.get("SharesStats", {}).get("PercentInsiders")
+	percent_insiders = normalize_api_value(data.get("SharesStats", {}).get("PercentInsiders"))
+	if percent_insiders is None:
+		return {"Andel Insiders": None}
 	return {
 		"Andel Insiders": round(percent_insiders/100, 4)
 	}
@@ -423,11 +452,9 @@ def buyback_change_latest(data):
 
 	shares_dict = {}
 	for date, values in inc_data.items():
-		try:
-			shares = float(values.get("commonStockSharesOutstanding", 0))
+		shares = normalize_api_value(values.get("commonStockSharesOutstanding", 0))
+		if shares is not None:
 			shares_dict[date] = shares
-		except (TypeError, ValueError):
-			continue
 
 	if len(shares_dict) < 2:
 		return {}
@@ -456,10 +483,7 @@ def buyback_extensive(data):
 
         # Hjälpfunktion för att hämta och konvertera aktieantal
         def get_shares(date_key):
-            try:
-                return float(balance_sheet[date_key].get("commonStockSharesOutstanding", 0))
-            except (TypeError, ValueError):
-                return 0.0
+            return normalize_api_value(balance_sheet[date_key].get("commonStockSharesOutstanding", 0)) or 0.0
 
         # Hämta värden
         this_year_shares = get_shares(sorted_dates[0])
@@ -492,7 +516,7 @@ def total_yield(data):
 	try: 
 		### Debt Paydown Yield 
 		highlights = data.get("Highlights", {})
-		market_cap = highlights.get("MarketCapitalization")
+		market_cap = normalize_api_value(highlights.get("MarketCapitalization"))
 
 		balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
 		sorted_dates = sorted(balance_sheet.keys(), reverse=True)
@@ -503,26 +527,33 @@ def total_yield(data):
 		latest_bs = balance_sheet[latest_year]
 		previous_bs = balance_sheet[second_latest_year]
 
-		latest_net_debt = float(latest_bs.get("netDebt"))
-		previous_net_debt = float(previous_bs.get("netDebt"))
+		latest_net_debt = normalize_api_value(latest_bs.get("netDebt"))
+		previous_net_debt = normalize_api_value(previous_bs.get("netDebt"))
 
 		# Make sure we have all necessary values
-		if market_cap and latest_net_debt is not None and previous_net_debt is not None:
+		if market_cap is not None and latest_net_debt is not None and previous_net_debt is not None:
 			change_in_net_debt = previous_net_debt - latest_net_debt
-			debt_paydown_yield = change_in_net_debt / market_cap
+			debt_paydown_yield = safe_divide(change_in_net_debt, market_cap)
 		else:
 			print("Missing data to compute Debt Paydown Yield.")
+			debt_paydown_yield = None
 
 		### Buyback Yield 
 		buyback_rate = buyback_change_latest(data).get("Förändring Antal Aktier")
+		buyback_rate = normalize_api_value(buyback_rate)
 		# positiva värden blir negativa, negativa blir positiva 
-		buyback_yield_korrigerad = (-1 * buyback_rate) 
+		buyback_yield_korrigerad = (-1 * buyback_rate) if buyback_rate is not None else None
 		
 		### Dividend Yield 
-		dividend_yield = highlights.get("DividendYield") 
+		dividend_yield = normalize_api_value(highlights.get("DividendYield")) 
 
 		### Total Yield = dividend_yield + buyback_yield_korrigerad # + debt_paydown_yield
-		total_yield = dividend_yield + buyback_yield_korrigerad #+ debt_paydown_yield
+		if dividend_yield is None and buyback_yield_korrigerad is None:
+			return {"Total Avkastning": None}
+
+		total_yield = dividend_yield if dividend_yield is not None else 0
+		if buyback_yield_korrigerad is not None:
+			total_yield += buyback_yield_korrigerad
 
 		return {
 			"Total Avkastning": total_yield
@@ -534,11 +565,14 @@ def total_yield(data):
 def gross_profitability(data):
     try:
         highlights = data.get("Highlights", {})
-        gross_profit_ttm = float(highlights.get("GrossProfitTTM", {}))
+        gross_profit_ttm = normalize_api_value(highlights.get("GrossProfitTTM"))
 
         balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
         latest_year = sorted(balance_sheet.keys(), reverse=True)[0]
-        total_assets = float(balance_sheet.get(latest_year, {}).get("totalAssets", {}))
+        total_assets = normalize_api_value(balance_sheet.get(latest_year, {}).get("totalAssets"))
+
+        if gross_profit_ttm is None or total_assets is None or total_assets == 0:
+            return {"Bruttovinstmarginal": None}
 
         # gross profitability = gross profit / total assets 
         g_profitability = gross_profit_ttm / total_assets
@@ -546,7 +580,7 @@ def gross_profitability(data):
         return {"Bruttovinstmarginal": round(g_profitability, 4)}
     
     except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError):
-        return {}
+        return {"Bruttovinstmarginal": None}
 
 # accruals, skillnaden mellan rapporterad inkomst och fritt kassaflöde 
 def accruals(data):
@@ -554,34 +588,40 @@ def accruals(data):
         # netIncome & CashFlowFromOperations
         chash_flow = data.get("Financials", {}).get("Cash_Flow", {}).get("yearly", {})
         latest_year = sorted(chash_flow.keys(), reverse=True)[0]
-        net_income = float(chash_flow.get(latest_year, {}).get("netIncome", {}))
-        cash_flow_operating = float(chash_flow.get(latest_year, {}).get("totalCashFromOperatingActivities", {}))
+        net_income = normalize_api_value(chash_flow.get(latest_year, {}).get("netIncome"))
+        cash_flow_operating = normalize_api_value(chash_flow.get(latest_year, {}).get("totalCashFromOperatingActivities"))
         
         # totalAssets
         balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
         latest_year = sorted(balance_sheet.keys(), reverse=True)[0]
-        total_Assets = float(balance_sheet.get(latest_year, {}).get("totalAssets", {}))
+        total_Assets = normalize_api_value(balance_sheet.get(latest_year, {}).get("totalAssets"))
+
+        if net_income is None or cash_flow_operating is None or total_Assets is None or total_Assets == 0:
+            return {"Accruals": None}
 
         # accruals = netIncome - cashFlowOperating  / totalAssets
         accruals = (net_income - cash_flow_operating) / total_Assets
 
         return {"Accruals": round(accruals, 4)}
     except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError):
-        return {}
+        return {"Accruals": None}
 
 # tillgångstillväxt: tillväxt i totalAssets 
 def asset_growth(data):
     try: 
         balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
         last_two_y = sorted(balance_sheet.keys(), reverse=True)[0:2]
-        total_Assets_now = float(balance_sheet.get(last_two_y[0], {}).get("totalAssets", {}))
-        total_Assets_then = float(balance_sheet.get(last_two_y[1], {}).get("totalAssets", {}))
+        total_Assets_now = normalize_api_value(balance_sheet.get(last_two_y[0], {}).get("totalAssets"))
+        total_Assets_then = normalize_api_value(balance_sheet.get(last_two_y[1], {}).get("totalAssets"))
+
+        if total_Assets_now is None or total_Assets_then is None or total_Assets_then == 0:
+            return {"Tillgångstillväxt": None}
 
         # assetGrowth = TotalAssetsNow - totalAssetsThen / totalAssetsThen
         asset_g = (total_Assets_now - total_Assets_then) / total_Assets_then
         return {"Tillgångstillväxt": round(asset_g, 4)}
     except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError):
-        return {}
+        return {"Tillgångstillväxt": None}
     
 def compute_cop_at(data):
     # tröskelvärde, vissa cop_at exploderar
@@ -604,27 +644,30 @@ def compute_cop_at(data):
         second_latest_year = sorted_years_income[1]
 
         # ebit
-        ebit = float(income_statement[latest_year].get("ebit", 0))
+        ebit = normalize_api_value(income_statement[latest_year].get("ebit", 0))
 
         # set ebit to operating income if ebit is None
         if ebit is None: 
-            ebit = float(income_statement[latest_year].get("operatingIncome", 0))
+            ebit = normalize_api_value(income_statement[latest_year].get("operatingIncome", 0))
 
         # deprication and amortization
-        deprication_and_amortization = float(income_statement[latest_year].get("depreciationAndAmortization", 0))
+        deprication_and_amortization = normalize_api_value(income_statement[latest_year].get("depreciationAndAmortization", 0))
 
         if deprication_and_amortization is None:
-            deprication_and_amortization = float(income_statement[latest_year].get("reconciledDepreciation", 0))
+            deprication_and_amortization = normalize_api_value(income_statement[latest_year].get("reconciledDepreciation", 0))
 
         # Ensure total_assets_now is not zero before proceeding to avoid ZeroDivisionError later
-        total_assets_now = float(balance_sheet[latest_year].get("totalAssets", 0))
-        if total_assets_now == 0:
+        total_assets_now = normalize_api_value(balance_sheet[latest_year].get("totalAssets", 0))
+        if total_assets_now is None or total_assets_now == 0:
             return {"cop_at": None}
 
-        total_liabilities_now = float(balance_sheet[latest_year].get("totalCurrentLiabilities", 0))
+        total_liabilities_now = normalize_api_value(balance_sheet[latest_year].get("totalCurrentLiabilities", 0))
 
-        total_assets_then = float(balance_sheet[second_latest_year].get("totalAssets", 0))
-        total_liabilities_then = float(balance_sheet[second_latest_year].get("totalCurrentLiabilities", 0))
+        total_assets_then = normalize_api_value(balance_sheet[second_latest_year].get("totalAssets", 0))
+        total_liabilities_then = normalize_api_value(balance_sheet[second_latest_year].get("totalCurrentLiabilities", 0))
+
+        if ebit is None or total_liabilities_now is None or total_assets_then is None or total_liabilities_then is None:
+            return {"cop_at": None}
 
         working_capital_now = total_assets_now - total_liabilities_now
         working_capital_then = total_assets_then - total_liabilities_then
@@ -667,29 +710,21 @@ def compute_cop_at_generous(data):
         second_latest_year = sorted_years_income[1]
 
         # Extract required values
-        ebit = income_statement[latest_year].get("ebit")
+        ebit = normalize_api_value(income_statement[latest_year].get("ebit"))
         if ebit is None: 
-            ebit = float(income_statement[latest_year].get("operatingIncome", 0))
+            ebit = normalize_api_value(income_statement[latest_year].get("operatingIncome", 0))
     
-        total_assets_now = balance_sheet[latest_year].get("totalAssets")
-        netReceivables_now = balance_sheet[latest_year].get("netReceivables")
-        netReceivables_then = balance_sheet[second_latest_year].get("netReceivables")
-        inventory_now = balance_sheet[latest_year].get("inventory")
-        inventory_then = balance_sheet[second_latest_year].get("inventory")
+        total_assets_now = normalize_api_value(balance_sheet[latest_year].get("totalAssets"))
+        netReceivables_now = normalize_api_value(balance_sheet[latest_year].get("netReceivables"))
+        netReceivables_then = normalize_api_value(balance_sheet[second_latest_year].get("netReceivables"))
+        inventory_now = normalize_api_value(balance_sheet[latest_year].get("inventory"))
+        inventory_then = normalize_api_value(balance_sheet[second_latest_year].get("inventory"))
 
         # If *any* required value is missing → return None
         required = [ebit, total_assets_now, netReceivables_now,
                     netReceivables_then, inventory_now, inventory_then]
         if any(v is None for v in required):
             return {"cop_at_revised": None}
-
-        # Convert to floats
-        ebit = float(ebit)
-        total_assets_now = float(total_assets_now)
-        netReceivables_now = float(netReceivables_now)
-        netReceivables_then = float(netReceivables_then)
-        inventory_now = float(inventory_now)
-        inventory_then = float(inventory_then)
 
         # Prevent divide-by-zero
         if total_assets_now == 0:
