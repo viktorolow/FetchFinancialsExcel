@@ -53,20 +53,13 @@ class FundamentalDataFetcher:
         return company_list, tickers, isin_list
     
     def fetch_company_data(self, company_ticker):
-        # Fetch fundamental and price data
+        # Fetch fundamental data
         data = eodh.fetch_fundamentals(company_ticker)
-        price_data = eodh.fetch_price_data(company_ticker)
 
         # Initialize empty dictionaries
-        price = general = roce = pe = revenue = buybacks = ma = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
+        general = roce = revenue = buybacks = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
         
         # Fetch all indicators with error handling
-        try: 
-            price = eodh.real_time_price(company_ticker, data)
-            print(f"Price data fetched for {company_ticker}.")
-        except Exception as e:
-            print(f"Error fetching price data: {e}")
-
         try: 
             general = eodh.get_selected_highlights(data)
             print(f"Highlights fetched for {company_ticker}.")
@@ -78,12 +71,6 @@ class FundamentalDataFetcher:
             print(f"ROCE calculated for {company_ticker}.")
         except Exception as e:
             print(f"Error calculating ROCE: {e}")
-
-        try: 
-            pe = eodh.calculate_five_year_average_pe(company_ticker, data, price_data)
-            print(f"P/E ratio calculated for {company_ticker}.")
-        except Exception as e:
-            print(f"Error calculating P/E: {e}")
 
         try: 
             revenue = eodh.get_revenue_growth_data(data)
@@ -114,12 +101,6 @@ class FundamentalDataFetcher:
             print(f"Insider data fetched for {company_ticker}.")
         except Exception as e:
             print(f"Error fetching insider data: {e}")
-
-        try: 
-            ma = eodh.get_moving_averages(data)
-            print(f"Moving averages calculated for {company_ticker}.")
-        except Exception as e:
-            print(f"Error calculating moving averages: {e}")
 
         try: 
             gross_p = eodh.gross_profitability(data)
@@ -163,23 +144,9 @@ class FundamentalDataFetcher:
         except Exception as e:
             print(f"Error calculating NOA: {e}")
 
-        # Fetch conservative components for later calculation
-        try: 
-            conservative_comps = analyse.conservative(data, price_data)
-        except Exception as e:
-            print(f"Error calculating conservative components: {e}")
-            conservative_comps = {}
-        
-        try: 
-            excess_returns = analyse.calculate_monthly_excess_returns(company_ticker, price_data)
-        except Exception as e:
-            print(f"Error calculating excess returns: {e}")
-            excess_returns = {}
-
         # Combine all indicators
-        combined = {**price, **general, **roce, **pe, **revenue, **eps, **fcf, **buybacks, **insiders, **ma, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
-        # store price data here
-        other = {**conservative_comps, **excess_returns}
+        combined = {**general, **roce, **revenue, **eps, **fcf, **buybacks, **insiders, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
+        other = {}
         
         return combined, other
     
@@ -238,15 +205,6 @@ class FundamentalDataFetcher:
         # Create COP/AT Revised composite score
         df_analyzed = analyse.create_cop_at_noa_composite_score(df)
 
-        # Residual momentum
-        df_analyzed = analyse.residual_momentum(factor_country, df_analyzed, separate_data_list)
-        
-        # Apply Greenblatt formula
-        df_analyzed = analyse.greenblatt_formula(df_analyzed)
-        
-        # Apply conservative formula
-        df_analyzed = analyse.conservative_formula(df_analyzed, separate_data_list)
-        
         # Calculate quality score
         df_analyzed = analyse.quality_score(df_analyzed)
         
