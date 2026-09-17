@@ -642,46 +642,7 @@ def net_buyback_yield(data):
     result = (-sale_purchase_of_stock - issuance_of_capital_stock) / market_cap
     return {"Net Buyback Yield": round(result, 4)}
 
-# Deprecated: superseded by net_share_issuance_3y/5y (calendar-year-anchored). Kept for backward compatibility with existing Excel outputs.
-def buyback_extensive(data):
-    try:
-        # Hämta årsdata ur balansräkningen
-        balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
-        sorted_dates = sorted(balance_sheet.keys(), reverse=True)
-
-        if len(sorted_dates) < 2:
-            return {}
-
-        # Hjälpfunktion för att hämta och konvertera aktieantal
-        def get_shares(date_key):
-            try:
-                return float(balance_sheet[date_key].get("commonStockSharesOutstanding", 0))
-            except (TypeError, ValueError):
-                return 0.0
-
-        # Hämta värden
-        this_year_shares = get_shares(sorted_dates[0])
-        one_year_ago_shares = get_shares(sorted_dates[1])
-        three_years_ago_shares = get_shares(sorted_dates[3]) if len(sorted_dates) > 3 else None
-        five_years_ago_shares = get_shares(sorted_dates[5]) if len(sorted_dates) > 5 else None
-
-        results = {}
-
-        # 3 år
-        if three_years_ago_shares and three_years_ago_shares != 0:
-            results["Förändring antal aktier 3y"] = round((this_year_shares - three_years_ago_shares) / three_years_ago_shares,4)
-
-        # 5 år
-        if five_years_ago_shares and five_years_ago_shares != 0:
-            results["Förändring antal aktier 5y"] = round((this_year_shares - five_years_ago_shares) / five_years_ago_shares,4)
-
-        return results
-
-    except Exception as e:
-        return {}
-
-
-# beräknar total yield 
+# beräknar total yield
 def total_yield(data): 
 	try: 
 		### Debt Paydown Yield 

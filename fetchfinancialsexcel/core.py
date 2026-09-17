@@ -57,7 +57,7 @@ class FundamentalDataFetcher:
         data = eodh.fetch_fundamentals(company_ticker)
 
         # Initialize empty dictionaries
-        general = roce = revenue = buybacks = share_issuance = share_issuance_3y = share_issuance_5y = share_change_6m = share_change_12m = buyback_yield_kpi = net_buyback_yield_kpi = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
+        general = roce = revenue = share_issuance = share_issuance_3y = share_issuance_5y = share_change_6m = share_change_12m = buyback_yield_kpi = net_buyback_yield_kpi = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
         
         # Fetch all indicators with error handling
         try: 
@@ -90,12 +90,6 @@ class FundamentalDataFetcher:
         except Exception as e:
             print(f"Error fetching FCF data: {e}")
         
-        try: 
-            buybacks = eodh.buyback_extensive(data)
-            print(f"Buyback data fetched for {company_ticker}.")
-        except Exception as e:
-            print(f"Error fetching buyback data: {e}")
-
         try:
             share_issuance = eodh.net_share_issuance_1y(data)
             print(f"Net share issuance 1Y calculated for {company_ticker}.")
@@ -187,7 +181,7 @@ class FundamentalDataFetcher:
             print(f"Error calculating NOA: {e}")
 
         # Combine all indicators
-        combined = {**general, **roce, **revenue, **eps, **fcf, **buybacks, **share_issuance, **share_issuance_3y, **share_issuance_5y, **share_change_6m, **share_change_12m, **buyback_yield_kpi, **net_buyback_yield_kpi, **insiders, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
+        combined = {**general, **roce, **revenue, **eps, **fcf, **share_issuance, **share_issuance_3y, **share_issuance_5y, **share_change_6m, **share_change_12m, **buyback_yield_kpi, **net_buyback_yield_kpi, **insiders, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
         other = {}
         
         return combined, other
