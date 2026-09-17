@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Enhanced diagnostic logging for failed API requests and missing financial metrics.
 - Additional validation and tracing of EODHD responses to identify incomplete datasets.
+- **Share Count & Buyback Metrics**: New fundamentals-only KPIs — `Net Share Issuance 1Y/3Y/5Y`, `Share Count Change 6M/12M`, `Buyback Yield`, and `Net Buyback Yield` — derived from EODHD's `Balance_Sheet`, `Cash_Flow`, and `Highlights` fundamentals data, with no price or EOD endpoint required.
 
 ### Changed
 - Improved resilience against EODHD API rate limits (HTTP 429) through retry and backoff mechanisms.
@@ -17,11 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Increased robustness of ratio calculations when financial data is partially unavailable.
 - Improved processing of securities with incomplete fundamental data.
 
+### Removed
+- **Buyback Extensive**: Removed `buyback_extensive` and its `Förändring antal aktier 3y/5y` output columns, superseded by the calendar-year-anchored `Net Share Issuance 3Y/5Y`.
+
 ### Fixed
 - Prevented P/E calculations from failing when API responses return unexpected data structures.
 - Prevented EPS calculations from failing on missing values.
 - Prevented insider ownership calculations from failing on null inputs.
 - Reduced data loss caused by transient API rate limiting and temporary request failures.
+
+### Security
+- `debug_fetch_test.py` is no longer tracked in version control; it is a local-only diagnostic script holding a personal EODHD API key and must never be pushed.
 ``
 
 ## [0.4.0] - 2025-11-13
