@@ -147,3 +147,7 @@ examples/output/
 
 # other
 notebooks/
+
+# Local-only debug/test scripts (contain a hardcoded EODHD API key for local runs, never push)
+/New_KPI_test.py
+/debug_fetch_test.py

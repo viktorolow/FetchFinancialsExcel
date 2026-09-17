@@ -57,7 +57,7 @@ class FundamentalDataFetcher:
         data = eodh.fetch_fundamentals(company_ticker)
 
         # Initialize empty dictionaries
-        general = roce = revenue = buybacks = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
+        general = roce = revenue = buybacks = share_issuance = share_issuance_3y = share_issuance_5y = share_change_6m = share_change_12m = buyback_yield_kpi = net_buyback_yield_kpi = eps = total_yield = gross_p = accrual = asset_g = insiders = fcf = cop_at = cop_at_generous = noa = {}
         
         # Fetch all indicators with error handling
         try: 
@@ -95,8 +95,50 @@ class FundamentalDataFetcher:
             print(f"Buyback data fetched for {company_ticker}.")
         except Exception as e:
             print(f"Error fetching buyback data: {e}")
-        
-        try: 
+
+        try:
+            share_issuance = eodh.net_share_issuance_1y(data)
+            print(f"Net share issuance 1Y calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating net share issuance 1Y: {e}")
+
+        try:
+            share_issuance_3y = eodh.net_share_issuance_3y(data)
+            print(f"Net share issuance 3Y calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating net share issuance 3Y: {e}")
+
+        try:
+            share_issuance_5y = eodh.net_share_issuance_5y(data)
+            print(f"Net share issuance 5Y calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating net share issuance 5Y: {e}")
+
+        try:
+            share_change_6m = eodh.share_count_change_6m(data)
+            print(f"Share count change 6M calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating share count change 6M: {e}")
+
+        try:
+            share_change_12m = eodh.share_count_change_12m(data)
+            print(f"Share count change 12M calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating share count change 12M: {e}")
+
+        try:
+            buyback_yield_kpi = eodh.buyback_yield(data)
+            print(f"Buyback yield calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating buyback yield: {e}")
+
+        try:
+            net_buyback_yield_kpi = eodh.net_buyback_yield(data)
+            print(f"Net buyback yield calculated for {company_ticker}.")
+        except Exception as e:
+            print(f"Error calculating net buyback yield: {e}")
+
+        try:
             insiders = eodh.get_percent_insiders(data)
             print(f"Insider data fetched for {company_ticker}.")
         except Exception as e:
@@ -145,7 +187,7 @@ class FundamentalDataFetcher:
             print(f"Error calculating NOA: {e}")
 
         # Combine all indicators
-        combined = {**general, **roce, **revenue, **eps, **fcf, **buybacks, **insiders, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
+        combined = {**general, **roce, **revenue, **eps, **fcf, **buybacks, **share_issuance, **share_issuance_3y, **share_issuance_5y, **share_change_6m, **share_change_12m, **buyback_yield_kpi, **net_buyback_yield_kpi, **insiders, **gross_p, **accrual, **asset_g, **total_yield, **cop_at, **cop_at_generous, **noa}
         other = {}
         
         return combined, other

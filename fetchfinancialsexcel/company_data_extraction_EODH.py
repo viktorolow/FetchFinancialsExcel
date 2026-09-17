@@ -448,6 +448,201 @@ def buyback_change_latest(data):
 		"Förändring Antal Aktier": round(percent_change, 4) if percent_change is not None else None
 	}
 
+def net_share_issuance_1y(data):
+    balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
+
+    share_observations = []
+    for date, values in balance_sheet.items():
+        try:
+            shares = float(values.get("commonStockSharesOutstanding"))
+        except (TypeError, ValueError):
+            continue
+
+        if shares >= 0:
+            share_observations.append((date, shares))
+
+    share_observations.sort(key=lambda item: item[0], reverse=True)
+    if len(share_observations) < 2:
+        return {"Net Share Issuance 1Y": None}
+
+    latest_shares = share_observations[0][1]
+    previous_shares = share_observations[1][1]
+    if previous_shares == 0:
+        return {"Net Share Issuance 1Y": None}
+
+    issuance_rate = (latest_shares - previous_shares) / previous_shares
+    return {"Net Share Issuance 1Y": round(issuance_rate, 4)}
+
+def net_share_issuance_3y(data):
+    balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
+
+    share_observations = []
+    for date, values in balance_sheet.items():
+        try:
+            year = int(str(date)[:4])
+        except (TypeError, ValueError):
+            continue
+
+        try:
+            shares = float(values.get("commonStockSharesOutstanding"))
+        except (TypeError, ValueError):
+            continue
+
+        if shares >= 0:
+            share_observations.append((year, shares))
+
+    share_observations.sort(key=lambda item: item[0], reverse=True)
+    if len(share_observations) < 4:
+        return {"Net Share Issuance 3Y": None}
+
+    latest_year, latest_shares = share_observations[0]
+    target_year = latest_year - 3
+    matching_observation = next(
+        (shares for year, shares in share_observations if year == target_year),
+        None,
+    )
+    if matching_observation is None:
+        return {"Net Share Issuance 3Y": None}
+
+    three_years_ago_shares = matching_observation
+    if three_years_ago_shares == 0:
+        return {"Net Share Issuance 3Y": None}
+
+    issuance_rate = (latest_shares - three_years_ago_shares) / three_years_ago_shares
+    return {"Net Share Issuance 3Y": round(issuance_rate, 4)}
+
+def net_share_issuance_5y(data):
+    balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
+
+    share_observations = []
+    for date, values in balance_sheet.items():
+        try:
+            year = int(str(date)[:4])
+        except (TypeError, ValueError):
+            continue
+
+        try:
+            shares = float(values.get("commonStockSharesOutstanding"))
+        except (TypeError, ValueError):
+            continue
+
+        if shares >= 0:
+            share_observations.append((year, shares))
+
+    share_observations.sort(key=lambda item: item[0], reverse=True)
+    if not share_observations:
+        return {"Net Share Issuance 5Y": None}
+
+    latest_year, latest_shares = share_observations[0]
+    target_year = latest_year - 5
+    matching_observation = next(
+        (shares for year, shares in share_observations if year == target_year),
+        None,
+    )
+    if matching_observation is None or matching_observation == 0:
+        return {"Net Share Issuance 5Y": None}
+
+    issuance_rate = (latest_shares - matching_observation) / matching_observation
+    return {"Net Share Issuance 5Y": round(issuance_rate, 4)}
+
+def share_count_change_6m(data):
+    balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("quarterly", {})
+
+    share_observations = []
+    for date, values in balance_sheet.items():
+        try:
+            shares = float(values.get("commonStockSharesOutstanding"))
+        except (TypeError, ValueError):
+            continue
+
+        if shares >= 0:
+            share_observations.append((date, shares))
+
+    share_observations.sort(key=lambda item: item[0], reverse=True)
+    if len(share_observations) < 3:
+        return {"Share Count Change 6M": None}
+
+    latest_shares = share_observations[0][1]
+    two_quarters_ago_shares = share_observations[2][1]
+    if two_quarters_ago_shares == 0:
+        return {"Share Count Change 6M": None}
+
+    change = (latest_shares - two_quarters_ago_shares) / two_quarters_ago_shares
+    return {"Share Count Change 6M": round(change, 4)}
+
+def share_count_change_12m(data):
+    balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("quarterly", {})
+
+    share_observations = []
+    for date, values in balance_sheet.items():
+        try:
+            shares = float(values.get("commonStockSharesOutstanding"))
+        except (TypeError, ValueError):
+            continue
+
+        if shares >= 0:
+            share_observations.append((date, shares))
+
+    share_observations.sort(key=lambda item: item[0], reverse=True)
+    if len(share_observations) < 5:
+        return {"Share Count Change 12M": None}
+
+    latest_shares = share_observations[0][1]
+    four_quarters_ago_shares = share_observations[4][1]
+    if four_quarters_ago_shares == 0:
+        return {"Share Count Change 12M": None}
+
+    change = (latest_shares - four_quarters_ago_shares) / four_quarters_ago_shares
+    return {"Share Count Change 12M": round(change, 4)}
+
+# Buyback Yield = cash spent on gross repurchases / market cap, latest fiscal year.
+def buyback_yield(data):
+    cash_flow = data.get("Financials", {}).get("Cash_Flow", {}).get("yearly", {})
+    highlights = data.get("Highlights", {})
+
+    if not cash_flow:
+        return {"Buyback Yield": None}
+
+    latest_date = max(cash_flow.keys())
+    latest_cf = cash_flow[latest_date]
+
+    try:
+        sale_purchase_of_stock = float(latest_cf.get("salePurchaseOfStock"))
+        market_cap = float(highlights.get("MarketCapitalization"))
+    except (TypeError, ValueError):
+        return {"Buyback Yield": None}
+
+    if market_cap == 0:
+        return {"Buyback Yield": None}
+
+    result = -sale_purchase_of_stock / market_cap
+    return {"Buyback Yield": round(result, 4)}
+
+# Net Buyback Yield = (gross repurchases - gross issuance) / market cap, latest fiscal year.
+def net_buyback_yield(data):
+    cash_flow = data.get("Financials", {}).get("Cash_Flow", {}).get("yearly", {})
+    highlights = data.get("Highlights", {})
+
+    if not cash_flow:
+        return {"Net Buyback Yield": None}
+
+    latest_date = max(cash_flow.keys())
+    latest_cf = cash_flow[latest_date]
+
+    try:
+        sale_purchase_of_stock = float(latest_cf.get("salePurchaseOfStock"))
+        issuance_of_capital_stock = float(latest_cf.get("issuanceOfCapitalStock"))
+        market_cap = float(highlights.get("MarketCapitalization"))
+    except (TypeError, ValueError):
+        return {"Net Buyback Yield": None}
+
+    if market_cap == 0:
+        return {"Net Buyback Yield": None}
+
+    result = (-sale_purchase_of_stock - issuance_of_capital_stock) / market_cap
+    return {"Net Buyback Yield": round(result, 4)}
+
+# Deprecated: superseded by net_share_issuance_3y/5y (calendar-year-anchored). Kept for backward compatibility with existing Excel outputs.
 def buyback_extensive(data):
     try:
         # Hämta årsdata ur balansräkningen
@@ -471,10 +666,6 @@ def buyback_extensive(data):
         five_years_ago_shares = get_shares(sorted_dates[5]) if len(sorted_dates) > 5 else None
 
         results = {}
-
-        # 1 år
-        if one_year_ago_shares and one_year_ago_shares != 0:
-            results["Förändring antal aktier 1y"] = round((this_year_shares - one_year_ago_shares) / one_year_ago_shares,4)
 
         # 3 år
         if three_years_ago_shares and three_years_ago_shares != 0:
