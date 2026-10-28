@@ -100,6 +100,34 @@ class TestComputeCopAt(unittest.TestCase):
         bs["2023-12-31"] = bs.pop("2024-12-31")
         self.assertIsNone(eodh.compute_cop_at(data)["cop_at"])
 
+    def test_change_in_working_capital_is_added(self):
+        data = make_data()
+        cf = data["Financials"]["Cash_Flow"]["yearly"]["2025-12-31"]
+        # OP = 130; negativt = bundet kapital -> sänker cop_at
+        cf["changeInWorkingCapital"] = "-30"
+        self.assertAlmostEqual(eodh.compute_cop_at(data)["cop_at"], 0.1)
+        cf["changeInWorkingCapital"] = "30"
+        self.assertAlmostEqual(eodh.compute_cop_at(data)["cop_at"], 0.16)
+
+    def test_change_in_working_capital_overrides_balance_sheet(self):
+        data = make_data()
+        data["Financials"]["Cash_Flow"]["yearly"]["2025-12-31"]["changeInWorkingCapital"] = "0"
+        # balansräkningsdeltan (-15) ska inte användas
+        self.assertAlmostEqual(eodh.compute_cop_at(data)["cop_at"], 0.13)
+
+    def test_null_change_in_working_capital_falls_back_to_balance_sheet(self):
+        data = make_data()
+        data["Financials"]["Cash_Flow"]["yearly"]["2025-12-31"]["changeInWorkingCapital"] = None
+        self.assertAlmostEqual(eodh.compute_cop_at(data)["cop_at"], EXPECTED)
+
+    def test_asset_growth_above_300_percent_returns_none(self):
+        data = make_data()
+        bs_now = data["Financials"]["Balance_Sheet"]["yearly"]["2025-12-31"]
+        bs_now["totalAssets"] = "4001"
+        self.assertIsNone(eodh.compute_cop_at(data)["cop_at"])
+        bs_now["totalAssets"] = "4000"  # exakt 300 % passerar
+        self.assertIsNotNone(eodh.compute_cop_at(data)["cop_at"])
+
     def test_non_positive_prior_assets_returns_none(self):
         data = make_data()
         data["Financials"]["Balance_Sheet"]["yearly"]["2024-12-31"]["totalAssets"] = "0"

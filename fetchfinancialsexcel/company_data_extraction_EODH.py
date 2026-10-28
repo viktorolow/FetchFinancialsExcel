@@ -790,8 +790,9 @@ def _select_cop_years(income_statement, balance_sheet):
     return latest, previous
 
 # cash-based operating profitability före avskrivningar (Ball, Gerakos, Linnainmaa & Nikolaev, 2016)
-# cop_at = (OP - ΔAR - ΔInv - ΔPrepaid + ΔDeferredRevenue + ΔAP + ΔAccrued) / totalAssets föregående år
-# där OP = operatingIncome + researchDevelopment + D&A
+# cop_at = (OP + changeInWorkingCapital) / totalAssets föregående år
+# där OP = operatingIncome + researchDevelopment + D&A. Saknas changeInWorkingCapital används
+# balansräkningen: -ΔAR - ΔInv - ΔPrepaid + ΔDeferredRevenue + ΔAP + ΔAccrued
 def compute_cop_at(data):
     try:
         financials = data.get("Financials", {}) or {}
@@ -821,23 +822,34 @@ def compute_cop_at(data):
         if total_assets_then is None or total_assets_then <= 0:
             return {"cop_at": None}
 
-        # förändring i en rörelsekapitalpost, 0 om posten saknas något av åren
-        def delta(key):
-            now, then = _num(bs_now, key), _num(bs_then, key)
-            if now is None or then is None:
-                return 0.0
-            return now - then
+        # rimlighetskontroll: tillgångstillväxt > 300 % tyder på felaktig balansräkning föregående år
+        total_assets_now = _num(bs_now, "totalAssets")
+        if total_assets_now / total_assets_then - 1 > 3:
+            return {"cop_at": None}
 
         operating_profit = operating_income + research_development + depreciation
-        cash_based_operating_profits = (
-            operating_profit
-            - delta("netReceivables")
-            - delta("inventory")
-            - delta("otherCurrentAssets")       # proxy för förutbetalda kostnader
-            + delta("currentDeferredRevenue")
-            + delta("accountsPayable")
-            + delta("otherCurrentLiab")         # proxy för upplupna kostnader
-        )
+
+        # rörelsekapital från kassaflödesanalysen (kassaflödeskonvention: negativt = bundet kapital, adderas)
+        change_in_working_capital = _num(cash_flow.get(latest_year, {}), "changeInWorkingCapital")
+
+        if change_in_working_capital is None:
+            # reserv: balansräkningsdelta, 0 om posten saknas något av åren
+            def delta(key):
+                now, then = _num(bs_now, key), _num(bs_then, key)
+                if now is None or then is None:
+                    return 0.0
+                return now - then
+
+            change_in_working_capital = (
+                - delta("netReceivables")
+                - delta("inventory")
+                - delta("otherCurrentAssets")       # proxy för förutbetalda kostnader
+                + delta("currentDeferredRevenue")
+                + delta("accountsPayable")
+                + delta("otherCurrentLiab")         # proxy för upplupna kostnader
+            )
+
+        cash_based_operating_profits = operating_profit + change_in_working_capital
 
         cop_at = cash_based_operating_profits / total_assets_then
         return {"cop_at": round(cop_at, 4)}

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Increased robustness of ratio calculations when financial data is partially unavailable.
 - Improved processing of securities with incomplete fundamental data.
 - **cop_at**: Redefined as cash-based operating profitability before depreciation (Ball, Gerakos, Linnainmaa & Nikolaev, 2016): (operatingIncome + R&D + D&A − ΔAR − ΔInventory − ΔotherCurrentAssets + ΔDeferredRevenue + ΔAccountsPayable + ΔotherCurrentLiab) / prior-year totalAssets. Uses the latest fiscal year complete in both income statement and balance sheet, falls back to `ebit` and `reconciledDepreciation`/`Cash_Flow.depreciation`, treats missing working-capital items as zero change, and no longer caps |cop_at| at 1.
+- **cop_at**: Working-capital change now taken from `Cash_Flow.changeInWorkingCapital` (added, cash-flow sign convention); the balance-sheet deltas are only used when that field is missing, since EODHD's `otherCurrentAssets`/`otherCurrentLiab` are residuals that can turn negative. `cop_at` is set to empty when total assets grew more than 300 % year over year (likely faulty prior-year balance sheet).
 
 ### Removed
 - **Buyback Extensive**: Removed `buyback_extensive` and its `Förändring antal aktier 3y/5y` output columns, superseded by the calendar-year-anchored `Net Share Issuance 3Y/5Y`.
