@@ -738,69 +738,111 @@ def asset_growth(data):
     except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError):
         return {}
     
+# hjälpfunktion: första värdet bland keys som går att tolka som tal, annars None
+# (EODHD skickar ofta med fältet men med värdet null)
+def _num(d, *keys):
+    if not isinstance(d, dict):
+        return None
+    for key in keys:
+        value = d.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number != number:  # NaN
+            continue
+        return number
+    return None
+
+# hjälpfunktion för cop_at: väljer senaste kompletta räkenskapsår och föregående år (~12 mån tidigare)
+def _select_cop_years(income_statement, balance_sheet):
+    def parse(date_str):
+        try:
+            return datetime.date.fromisoformat(str(date_str)[:10])
+        except ValueError:
+            return None
+
+    bs_dates = {}
+    for key, row in balance_sheet.items():
+        parsed = parse(key)
+        if parsed is not None and _num(row, "totalAssets") is not None:
+            bs_dates[key] = parsed
+
+    # senaste datum som finns i både resultat- och balansräkning med rörelseresultat och totalAssets
+    candidates = [
+        key for key in income_statement
+        if key in bs_dates and _num(income_statement[key], "operatingIncome", "ebit") is not None
+    ]
+    if not candidates:
+        return None, None
+    latest = max(candidates, key=lambda k: bs_dates[k])
+
+    # föregående år: närmast tidigare datum i balansräkningen med totalAssets
+    earlier = [key for key in bs_dates if bs_dates[key] < bs_dates[latest]]
+    if not earlier:
+        return latest, None
+    previous = max(earlier, key=lambda k: bs_dates[k])
+    gap_days = (bs_dates[latest] - bs_dates[previous]).days
+    if not 300 <= gap_days <= 430:
+        return latest, None
+    return latest, previous
+
+# cash-based operating profitability före avskrivningar (Ball, Gerakos, Linnainmaa & Nikolaev, 2016)
+# cop_at = (OP - ΔAR - ΔInv - ΔPrepaid + ΔDeferredRevenue + ΔAP + ΔAccrued) / totalAssets föregående år
+# där OP = operatingIncome + researchDevelopment + D&A
 def compute_cop_at(data):
-    # tröskelvärde, vissa cop_at exploderar
-    THRESHOLD = 1
-
     try:
-        # cash based operating profits
-        income_statement = data.get("Financials", {}).get("Income_Statement", {}).get("yearly", {})
-        balance_sheet = data.get("Financials", {}).get("Balance_Sheet", {}).get("yearly", {})
+        financials = data.get("Financials", {}) or {}
+        income_statement = (financials.get("Income_Statement", {}) or {}).get("yearly", {}) or {}
+        balance_sheet = (financials.get("Balance_Sheet", {}) or {}).get("yearly", {}) or {}
+        cash_flow = (financials.get("Cash_Flow", {}) or {}).get("yearly", {}) or {}
 
-        # Ensure we have at least two years of data
-        if len(income_statement) < 2 or len(balance_sheet) < 2:
+        latest_year, previous_year = _select_cop_years(income_statement, balance_sheet)
+        if latest_year is None or previous_year is None:
             return {"cop_at": None}
 
-        # Hämta senaste året
-        sorted_years_income = sorted(income_statement.keys(), reverse=True)
-        sorted_years_balance = sorted(balance_sheet.keys(), reverse=True)
+        inc_now = income_statement[latest_year]
+        bs_now = balance_sheet[latest_year]
+        bs_then = balance_sheet[previous_year]
 
-        latest_year = sorted_years_income[0]
-        second_latest_year = sorted_years_income[1]
+        operating_income = _num(inc_now, "operatingIncome", "ebit")
+        research_development = _num(inc_now, "researchDevelopment") or 0.0
 
-        # ebit
-        ebit = float(income_statement[latest_year].get("ebit", 0))
-
-        # set ebit to operating income if ebit is None
-        if ebit is None: 
-            ebit = float(income_statement[latest_year].get("operatingIncome", 0))
-
-        # deprication and amortization
-        deprication_and_amortization = float(income_statement[latest_year].get("depreciationAndAmortization", 0))
-
-        if deprication_and_amortization is None:
-            deprication_and_amortization = float(income_statement[latest_year].get("reconciledDepreciation", 0))
-
-        # Ensure total_assets_now is not zero before proceeding to avoid ZeroDivisionError later
-        total_assets_now = float(balance_sheet[latest_year].get("totalAssets", 0))
-        if total_assets_now == 0:
+        # D&A: saknas alla fält blir måttet None (sätts inte till 0, då blir det i tysthet "efter avskrivningar")
+        depreciation = _num(inc_now, "depreciationAndAmortization", "reconciledDepreciation")
+        if depreciation is None:
+            depreciation = _num(cash_flow.get(latest_year, {}), "depreciation")
+        if operating_income is None or depreciation is None:
             return {"cop_at": None}
 
-        total_liabilities_now = float(balance_sheet[latest_year].get("totalCurrentLiabilities", 0))
-
-        total_assets_then = float(balance_sheet[second_latest_year].get("totalAssets", 0))
-        total_liabilities_then = float(balance_sheet[second_latest_year].get("totalCurrentLiabilities", 0))
-
-        working_capital_now = total_assets_now - total_liabilities_now
-        working_capital_then = total_assets_then - total_liabilities_then
-
-        # förändring i working capital, föregående år till i år
-        change_in_working_capital = working_capital_now - working_capital_then
-
-        #### cash_based_operating_profits
-        cash_based_operating_profits = ebit + deprication_and_amortization - change_in_working_capital
-
-        #### cash based operating profits to book assets
-        cop_at = cash_based_operating_profits / total_assets_now
-
-        # Apply the threshold filter
-        if abs(cop_at) > THRESHOLD:
+        total_assets_then = _num(bs_then, "totalAssets")
+        if total_assets_then is None or total_assets_then <= 0:
             return {"cop_at": None}
-        else:
-            return {"cop_at": round(cop_at, 4)}
 
-    except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError):
-        # If any error occurs, return None for cop_at
+        # förändring i en rörelsekapitalpost, 0 om posten saknas något av åren
+        def delta(key):
+            now, then = _num(bs_now, key), _num(bs_then, key)
+            if now is None or then is None:
+                return 0.0
+            return now - then
+
+        operating_profit = operating_income + research_development + depreciation
+        cash_based_operating_profits = (
+            operating_profit
+            - delta("netReceivables")
+            - delta("inventory")
+            - delta("otherCurrentAssets")       # proxy för förutbetalda kostnader
+            + delta("currentDeferredRevenue")
+            + delta("accountsPayable")
+            + delta("otherCurrentLiab")         # proxy för upplupna kostnader
+        )
+
+        cop_at = cash_based_operating_profits / total_assets_then
+        return {"cop_at": round(cop_at, 4)}
+
+    except (TypeError, ValueError, KeyError, IndexError, ZeroDivisionError, AttributeError):
         return {"cop_at": None}
 
 def compute_cop_at_generous(data):
@@ -816,43 +858,31 @@ def compute_cop_at_generous(data):
 
         # Sort years (latest first)
         sorted_years_income = sorted(income_statement.keys(), reverse=True)
-        sorted_years_balance = sorted(balance_sheet.keys(), reverse=True)
 
         latest_year = sorted_years_income[0]
         second_latest_year = sorted_years_income[1]
 
         # Extract required values
-        ebit = income_statement[latest_year].get("ebit")
-        if ebit is None: 
-            ebit = float(income_statement[latest_year].get("operatingIncome", 0))
-    
-        total_assets_now = balance_sheet[latest_year].get("totalAssets")
-        netReceivables_now = balance_sheet[latest_year].get("netReceivables")
-        netReceivables_then = balance_sheet[second_latest_year].get("netReceivables")
-        inventory_now = balance_sheet[latest_year].get("inventory")
-        inventory_then = balance_sheet[second_latest_year].get("inventory")
+        ebit = _num(income_statement[latest_year], "ebit", "operatingIncome")
+        total_assets_now = _num(balance_sheet[latest_year], "totalAssets")
 
-        # If *any* required value is missing → return None
-        required = [ebit, total_assets_now, netReceivables_now,
-                    netReceivables_then, inventory_now, inventory_then]
-        if any(v is None for v in required):
+        if ebit is None or total_assets_now is None:
             return {"cop_at_revised": None}
-
-        # Convert to floats
-        ebit = float(ebit)
-        total_assets_now = float(total_assets_now)
-        netReceivables_now = float(netReceivables_now)
-        netReceivables_then = float(netReceivables_then)
-        inventory_now = float(inventory_now)
-        inventory_then = float(inventory_then)
 
         # Prevent divide-by-zero
         if total_assets_now == 0:
             return {"cop_at_revised": None}
 
-        # Changes
-        change_in_netReceivables = netReceivables_now - netReceivables_then
-        change_in_inventory = inventory_now - inventory_then
+        # Changes, 0 if the item is missing in either year
+        def delta(key):
+            now = _num(balance_sheet[latest_year], key)
+            then = _num(balance_sheet[second_latest_year], key)
+            if now is None or then is None:
+                return 0.0
+            return now - then
+
+        change_in_netReceivables = delta("netReceivables")
+        change_in_inventory = delta("inventory")
 
         # COP_AT
         numerator = ebit - change_in_netReceivables - change_in_inventory
@@ -861,7 +891,7 @@ def compute_cop_at_generous(data):
 
         # Threshold filter
         if abs(cop_at) > THRESHOLD:
-            return {"cop_at": None}
+            return {"cop_at_revised": None}
         return {"cop_at_revised": round(cop_at, 4)}
 
     except Exception:

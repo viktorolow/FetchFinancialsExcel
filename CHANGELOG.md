@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved handling of inconsistent API response types (`None`, `dict`, `str`, `int`, `float`) across financial metric calculations.
 - Increased robustness of ratio calculations when financial data is partially unavailable.
 - Improved processing of securities with incomplete fundamental data.
+- **cop_at**: Redefined as cash-based operating profitability before depreciation (Ball, Gerakos, Linnainmaa & Nikolaev, 2016): (operatingIncome + R&D + D&A − ΔAR − ΔInventory − ΔotherCurrentAssets + ΔDeferredRevenue + ΔAccountsPayable + ΔotherCurrentLiab) / prior-year totalAssets. Uses the latest fiscal year complete in both income statement and balance sheet, falls back to `ebit` and `reconciledDepreciation`/`Cash_Flow.depreciation`, treats missing working-capital items as zero change, and no longer caps |cop_at| at 1.
 
 ### Removed
 - **Buyback Extensive**: Removed `buyback_extensive` and its `Förändring antal aktier 3y/5y` output columns, superseded by the calendar-year-anchored `Net Share Issuance 3Y/5Y`.
@@ -26,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented EPS calculations from failing on missing values.
 - Prevented insider ownership calculations from failing on null inputs.
 - Reduced data loss caused by transient API rate limiting and temporary request failures.
+- `cop_at` and `cop_at_revised` no longer become empty when EODHD returns `null` for EBIT or D&A; added `_num` helper for null-safe numeric reads.
+- `cop_at_revised` no longer requires inventory/receivables data and no longer overwrites `cop_at` with an empty value when it exceeds its cap.
 
 ### Security
 - `debug_fetch_test.py` is no longer tracked in version control; it is a local-only diagnostic script holding a personal EODHD API key and must never be pushed.
